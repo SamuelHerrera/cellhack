@@ -164,6 +164,10 @@ export async function start(
 			distinctGen.add(initialGenome);
 			// Age the cell to die
 			cells[id].health -= Math.min(cells[k].age / 100, 0.3);
+			if (cells[id].health <= 0) {
+				graveyard[id] = true;
+				continue;
+			}
 			// Cell gets old and more experienced so they take priority over decisions
 			cells[k].age++;
 			cell.health = cells[id].health;
@@ -202,6 +206,10 @@ export async function start(
 			// Rest
 			if (response == 'R') {
 				cells[id].health = Math.min(cells[id].health + 1 - occupiedCount / 10, 99);
+			}
+			// Self Die ;)
+			else if (response == 'S') {
+				cells[id].health = 0;
 			}
 			// Communicate
 			else if (response.startsWith('C')) {

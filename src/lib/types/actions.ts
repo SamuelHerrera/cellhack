@@ -4,7 +4,7 @@ export type Actions = 'M' | 'E' | 'D'; // Move, Eat, Duplicate
 export type Communicate = Concat3<['C', DirectionV | DirectionH, string]>;
 export type Concat3<T extends string[]> = `${T[0]}${T[1]}${T[2]}`;
 export type Concat2<T extends string[]> = `${T[0]}${T[1]}`;
-export type ReturnType = Concat2<[Actions, DirectionV | DirectionH]> | Communicate | 'R' | 'N'; // Rest, Nothing
+export type ReturnType = Concat2<[Actions, DirectionV | DirectionH]> | Communicate | 'R' | 'N' | 'S'; // Rest, Nothing, SelfDie
 export type Surrounding = DirectionV | DirectionH | Concat2<[DirectionV, DirectionH]>;
 export type CellInternal = {
 	id: string;
