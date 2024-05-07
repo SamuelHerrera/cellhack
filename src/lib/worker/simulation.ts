@@ -188,16 +188,17 @@ export async function start(
 			// Collect cell messages
 			const cellMessages = messages[id];
 			// ------------ Evaluate cell function ---------------------------
+			const cellExposed = { ...cell };
 			const response = (await algorithmDict[genome]({
-				cell: { ...cell },
+				cell: cellExposed,
 				surroundings,
 				messages: cellMessages,
 				console: consoleProxy,
 				fetch: function () {}
 			})) as ReturnType;
 			// ---------------- Processing cell response -------------------------------------------------------------
-			cells[k].memory = `${cell.memory || ''}`.padStart(maxMemory, ' ');
-			cells[k].genome = `${cell.genome || ''}`.padStart(maxGenome, ' ');
+			cells[k].memory = `${cellExposed.memory || ''}`.padStart(maxMemory, ' ');
+			cells[k].genome = `${cellExposed.genome || ''}`.padStart(maxGenome, ' ');
 			// Rest
 			if (response == 'R') {
 				cells[id].health = Math.min(cells[id].health + 1 - occupiedCount / 10, 99);
