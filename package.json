@@ -4,6 +4,7 @@
 	"private": true,
 	"scripts": {
 		"dev": "vite dev",
+		"ssh": "ssh root@74.208.238.92",
 		"build": "vite build",
 		"preview": "vite preview",
 		"test": "npm run test:integration && npm run test:unit",
@@ -22,14 +23,17 @@
 		"@types/eslint": "^8.56.0",
 		"@typescript-eslint/eslint-plugin": "^7.0.0",
 		"@typescript-eslint/parser": "^7.0.0",
+		"autoprefixer": "^10.4.19",
 		"eslint": "^8.56.0",
 		"eslint-config-prettier": "^9.1.0",
 		"eslint-plugin-svelte": "^2.35.1",
+		"postcss": "^8.4.38",
 		"prettier": "^3.1.1",
 		"prettier-plugin-svelte": "^3.1.2",
 		"sass": "^1.76.0",
 		"svelte": "^4.2.7",
 		"svelte-check": "^3.6.0",
+		"tailwindcss": "^3.4.3",
 		"tslib": "^2.4.1",
 		"typescript": "^5.0.0",
 		"vite": "^5.0.3",
@@ -42,6 +46,7 @@
 		"@codemirror/lang-javascript": "^6.2.2",
 		"codemirror": "^6.0.1",
 		"comlink": "^4.4.1",
-		"localforage": "^1.10.0"
+		"localforage": "^1.10.0",
+		"monaco-editor": "^0.48.0"
 	}
 }

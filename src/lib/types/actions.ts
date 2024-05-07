@@ -9,6 +9,7 @@ export type Surrounding = DirectionV | DirectionH | Concat2<[DirectionV, Directi
 export type CellInternal = {
 	id: string;
 	initialGenome: string;
+	genomeFnId: string;
 	age: number; // 0 means death, 9 means healthy
 	health: number; // 0 means death, 9 means healthy
 	memory: string;
@@ -30,6 +31,10 @@ export type CellPosition = {
 export type StepData = {
 	cells: Record<string, Cell>;
 	cellPositions: Record<string, CellPosition>;
-	ignoredCount: number;
-  step: number
-}
+	step: number;
+  totalCells: number;
+  cellsCreated: number;
+  cellsDied: number;
+  ignoredCount: number;
+  overallTime: number;
+};

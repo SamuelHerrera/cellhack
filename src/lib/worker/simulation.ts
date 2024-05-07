@@ -7,17 +7,16 @@ import type {
 	ReturnType,
 	Message
 } from '$lib/types/actions';
-import { evaluator } from '$lib/worker/evaluator';
 import localforage from 'localforage';
+import { fnEvaluator } from './fnEvaluator';
 const simulationStore = localforage.createInstance({
 	name: 'SIMULATION_STORE',
 	storeName: 'evolution'
 });
-const positions = ['T', 'B', 'L', 'R', 'TL', 'TR', 'BL', 'BR'] as Surrounding[];
-
+const positions = ['T', 'TR', 'R', 'BR', 'B', 'BL', 'L', 'TL'] as Surrounding[];
 let port: MessagePort;
 let metadataPort: MessagePort;
-let shouldStop: Promise<boolean> | boolean = false;
+let shouldStop: boolean = false;
 let isRunning = false;
 export function setCommChannel(_port: MessagePort) {
 	port = _port;
@@ -26,7 +25,13 @@ export function setMetadataChannel(_port: MessagePort) {
 	metadataPort = _port;
 }
 export async function start(
-	algorithms: string[],
+	algorithms: (
+		| {
+				code: string;
+				id: string;
+		  }
+		| undefined
+	)[],
 	map: {
 		width: number;
 		height: number;
@@ -40,36 +45,67 @@ export async function start(
 	}
 ) {
 	if (isRunning) return;
+	const nonEmptyCodeCount = algorithms.filter((alg) => !!alg?.code).length;
+	if (!nonEmptyCodeCount) return;
+	const consoleProxy = {
+		log(...args: unknown[]) {
+			metadataPort.postMessage({ event: 'log', args, time: new Date().toISOString() });
+		},
+		info(...args: unknown[]) {
+			metadataPort.postMessage({ event: 'info', args, time: new Date().toISOString() });
+		},
+		warn(...args: unknown[]) {
+			metadataPort.postMessage({ event: 'warn', args, time: new Date().toISOString() });
+		},
+		error(...args: unknown[]) {
+			metadataPort.postMessage({ event: 'error', args, time: new Date().toISOString() });
+		},
+		debug(...args: unknown[]) {
+			metadataPort.postMessage({ event: 'debug', args, time: new Date().toISOString() });
+		}
+	};
 	isRunning = true;
+	shouldStop = false;
 	const initialPositions = [
-		{ x: 50, y: 50 },
-		{ x: map.width - 1, y: map.width - 1 },
+		{ x: 0, y: 0 },
 		{ x: map.width - 1, y: 0 },
+		{ x: map.width - 1, y: map.height - 1 },
 		{ x: 0, y: map.height - 1 }
 	];
-	const algorithmDict: Record<string, string> = {};
+	const algorithmDict: Record<string, (context: Record<string, unknown>) => Promise<ReturnType>> =
+		{};
 	const maxMemory = options?.maxMemory || 4;
 	const maxGenome = options?.maxGenome || 4;
 	let cellsCreated = 0;
+	let cellsDied = 0;
 	let ignoredCount = 0;
+	const startTime = new Date().getTime();
 	const cells: Record<string, Cell> = {};
 	const cellPositions: { [cellId: string]: CellPosition } = {};
 	const cellsByPos: Record<number, Record<number, string>> = {};
-	shouldStop = false;
 	// Cleanup last execution data
 	await simulationStore.clear();
-	// Store map size so can be used later to generate map image
-	await simulationStore.setItem(`map`, map);
+	port.postMessage(
+		JSON.stringify({
+			event: 'setSize',
+			map
+		})
+	);
 	let algInitialized = 0;
 	// Instantiate algorithm functions and the initial seed with a genome Identifier
 	for (const alg of algorithms) {
+		if (!alg) {
+			algInitialized++;
+			continue;
+		}
 		const genome = `${algInitialized}`.padStart(maxGenome, ' ');
-		algorithmDict[genome] = alg;
+		algorithmDict[genome] = fnEvaluator(alg.code);
 		const id = `C${cellsCreated}`;
 		const cell: Cell = {
 			id,
 			genome,
 			initialGenome: genome,
+			genomeFnId: alg.id,
 			age: 0,
 			health: 50,
 			memory: ''.padStart(maxMemory, ' ')
@@ -85,7 +121,15 @@ export async function start(
 	let messages: { [cellId: string]: Message[] } = {};
 	let step = 0;
 	// Storing initial view (step 0)
-	if (options?.record) await simulationStore.setItem(`${step}`, { cells, cellPositions });
+	if (options?.record)
+		await simulationStore.setItem(`${step}`, {
+			cells,
+			cellPositions,
+			cellsCreated,
+			cellsDied,
+			ignoredCount,
+			startTime
+		});
 	// --------------- Start processing steps until max steps or end condition reached -------------------
 	while ((!options?.maxSteps || step < options?.maxSteps) && !shouldStop) {
 		// Take a snapshot of current state to decouple; so cells, cellPositions continue read only
@@ -111,44 +155,52 @@ export async function start(
 				}
 			>
 		> = {};
+		const distinctGen = new Set();
 		// ------------------- Iterate all living cells------------------------------------------------
 		for (const k of Object.keys(prevCells)) {
 			// ----------------- Collect surroundings from cell position -----------------------------------------
 			const cell = prevCells[k] as Cell;
-			const { genome, id } = cell;
+			const { genome, id, initialGenome } = cell;
+			distinctGen.add(initialGenome);
+			// Age the cell to die
+			cells[id].health -= Math.min(cells[k].age / 100, 0.3);
+			// Cell gets old and more experienced so they take priority over decisions
+			cells[k].age++;
+			cell.health = cells[id].health;
+			let occupiedCount = 0;
 			const surroundings = positions.reduce((dict, posKey) => {
 				let { x, y } = cellPositions[id];
 				if (posKey.includes('T')) y--;
 				else if (posKey.includes('B')) y++;
 				if (posKey.includes('R')) x++;
 				else if (posKey.includes('L')) x--;
-				if (prevCells[cellsByPos[x]?.[y]])
+				if (prevCells[cellsByPos[x]?.[y]]) {
 					dict[posKey] = {
 						genome: prevCells[cellsByPos[x]?.[y]].genome
 					};
-				else if (y >= map.height || x >= map.width || x < 0 || y < 0) dict[posKey] = 'W';
-				else dict[posKey] = 'E';
+					occupiedCount++;
+				} else if (y >= map.height || x >= map.width || x < 0 || y < 0) {
+					dict[posKey] = 'W';
+					occupiedCount++;
+				} else dict[posKey] = 'E';
 				return dict;
 			}, {} as CellContext);
 			// Collect cell messages
 			const cellMessages = messages[id];
-			// ---------------- Evaluate cell function -------------------------------------------------------------
-			const response = (await evaluator(algorithmDict[genome], {
+			// ------------ Evaluate cell function ---------------------------
+			const response = (await algorithmDict[genome]({
 				cell: { ...cell },
 				surroundings,
 				messages: cellMessages,
-				console: {
-					log(...args: unknown[]) {
-						metadataPort.postMessage({ event: 'log', args });
-					}
-				}
+				console: consoleProxy,
+				fetch: function () {}
 			})) as ReturnType;
 			// ---------------- Processing cell response -------------------------------------------------------------
 			cells[k].memory = `${cell.memory || ''}`.padStart(maxMemory, ' ');
 			cells[k].genome = `${cell.genome || ''}`.padStart(maxGenome, ' ');
 			// Rest
 			if (response == 'R') {
-				cells[id].health++;
+				cells[id].health = Math.min(cells[id].health + 1 - occupiedCount / 10, 99);
 			}
 			// Communicate
 			else if (response.startsWith('C')) {
@@ -162,16 +214,18 @@ export async function start(
 				else if (response.includes('B')) y++;
 				if (response.includes('R')) x++;
 				else if (response.includes('L')) x--;
-				const targetCell = cells[cellsByPos[x]?.[y]];
-				if (targetCell) {
+				const targetId = cellsByPos[x][y];
+				if (cells[targetId]) {
 					// Take from target
-					targetCell.health--;
+					const donation = Math.min(cells[targetId].health, 1);
+					if (donation < 1) cells[targetId].health = 0;
+					else cells[targetId].health--;
 					// Feed ourselves
-					cells[id].health++;
+					cells[id].health = Math.min(cells[id].health + donation, 99);
 					// Validate we are alive
 					if (cells[id].health > 0 && graveyard[id]) delete graveyard[id];
 					// Validate target is still alive
-					if (targetCell.health <= 0) graveyard[targetCell.id] = true;
+					if (cells[targetId].health <= 0) graveyard[targetId] = true;
 				}
 			}
 			// Feed means: (target + factor) and (cell - factor) where default factor is 1
@@ -181,16 +235,18 @@ export async function start(
 				else if (response.includes('B')) y++;
 				if (response.includes('R')) x++;
 				else if (response.includes('L')) x--;
-				const targetCell = cells[cellsByPos[x]?.[y]];
-				if (targetCell) {
-					// Take from target
-					targetCell.health++;
-					// Feed ourselves
-					cells[id].health--;
+				const targetId = cellsByPos[x][y];
+				if (cells[targetId]) {
+					// Take from ourselves
+					const donation = Math.min(cells[id].health, 1);
+					if (donation < 1) cells[id].health = 0;
+					else cells[id].health--;
+					// Give to target
+					cells[targetId].health = Math.min(cells[targetId].health + donation, 99);
 					// Validate we are alive
 					if (cells[id].health <= 0) graveyard[id] = true;
 					// Validate target is still alive
-					if (targetCell.health > 0 && graveyard[targetCell.id]) delete graveyard[targetCell.id];
+					if (cells[targetId].health > 0 && graveyard[targetId]) delete graveyard[targetId];
 				}
 			}
 			// Move or Duplicate
@@ -203,7 +259,15 @@ export async function start(
 				if (response.includes('R')) x++;
 				else if (response.includes('L')) x--;
 				// Is it valid?
-				if (cellsByPos[x]?.[y] || y >= map.height || x >= map.width || x < 0 || y < 0) {
+				if (
+					// Is cell occupied?
+					cellsByPos[x]?.[y] ||
+					// Or is at the wall boundaries
+					y >= map.height ||
+					x >= map.width ||
+					x < 0 ||
+					y < 0
+				) {
 					ignoredActions[id] = response;
 				} else {
 					// Initial set
@@ -242,8 +306,9 @@ export async function start(
 			// it gets re evaluated on eat and feed actions anyway
 			if (cells[id].health > 0 && graveyard[id]) delete graveyard[id];
 			else if (cells[id].health <= 0) graveyard[id] = true;
-			// cell gets old and more experienced so they take priority over decisions
-			cells[k].age++;
+		}
+		if (nonEmptyCodeCount > 1 && Array.from(distinctGen.keys()).length <= 1) {
+			shouldStop = true;
 		}
 		// ------------------- Living cells iteration ended -------------------------------------------------------
 		// Garbage collect all dead cells from this step;
@@ -254,10 +319,11 @@ export async function start(
 			delete cellPositions[id];
 			delete cells[id];
 			delete cellsByPos[x]?.[y];
+			cellsDied++;
 		}
 		// Process all (Move|Duplicate) actions generated on this step
 		for (const _x of Object.keys(overlapActions)) {
-      const x = +_x;
+			const x = +_x;
 			for (const _y of Object.keys(overlapActions[x])) {
 				const y = +_y;
 				const { cellId, action, prevPos } = overlapActions[x][+y];
@@ -270,7 +336,7 @@ export async function start(
 				} else if (action.startsWith('D')) {
 					// Divide health by half, other half is assigned to cloned cell
 					// When duplicated looks smarter to do it on event numbers since we floor it!
-					cells[cellId].health = Math.floor(cells[cellId].health / 2);
+					cells[cellId].health = cells[cellId].health / 2;
 					// If cell health goes 0 then it dies when having a baby
 					if (cells[cellId].health == 0) {
 						graveyard[cellId] = true;
@@ -291,32 +357,43 @@ export async function start(
 		messages = newMessages;
 		step++;
 		ignoredCount += Object.keys(ignoredActions).length;
+		const overallTime = new Date().getTime() - startTime;
 		// Record step
 		if (options?.record)
-			await simulationStore.setItem(`${step}`, { cells, cellPositions, ignoredCount });
-		// Notify step ended
-		metadataPort.postMessage({
-			event: 'step',
-			step,
-			cellsCreated,
-			totalCells: Object.keys(cells).length,
-			ignoredCount
-		});
-		// port.postMessage({
-		// 	step,
-		// 	cells,
-		// 	cellPositions
-		// });
+			await simulationStore.setItem(`${step}`, {
+				cells,
+				cellPositions,
+				cellsCreated,
+				cellsDied,
+				ignoredCount,
+				overallTime
+			});
+		metadataPort.postMessage({ event: 'lastProcessedStep', step });
+		// Notify to render
+		port.postMessage(
+			JSON.stringify({
+				step,
+				cells,
+				cellPositions,
+				cellsCreated,
+				cellsDied,
+				ignoredCount,
+				overallTime
+			})
+		);
 	}
 	// --------------- Ended processing steps ------------------------------------------------------------
 	isRunning = false;
-	port.postMessage({
-		step,
-		cells,
-		cellPositions
-	});
-}
-
-export function stop() {
-	shouldStop = true;
+	const overallTime = new Date().getTime() - startTime;
+	port.postMessage(
+		JSON.stringify({
+			step,
+			cells,
+			cellPositions,
+			cellsCreated,
+			cellsDied,
+			ignoredCount,
+			overallTime
+		})
+	);
 }
