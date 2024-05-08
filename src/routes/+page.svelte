@@ -5,6 +5,7 @@
 	import { transfer } from 'comlink';
 	import localforage from 'localforage';
 	import { onMount, tick } from 'svelte';
+	import SvelteMarkdown from 'svelte-markdown';
 	const simulationStore = localforage.createInstance({
 		name: 'SIMULATION_STORE',
 		storeName: 'evolution'
@@ -22,6 +23,7 @@
 	let record = localStorage['record'] == 'true';
 	let bosses: string[] = [];
 	let defaultBosses: string[] = [];
+	let daRules = '';
 	let userBosses: Record<string, string> = localStorage['userBosses']
 		? JSON.parse(localStorage['userBosses'])
 		: {};
@@ -166,6 +168,13 @@
 		userBosses = { ...userBosses };
 		currentCodeId = name;
 	}
+	function onPointerMove(evt: PointerEvent) {
+		const canvas = evt.target as HTMLCanvasElement;
+		const rect = canvas.getBoundingClientRect();
+		const x = evt.clientX - rect.left;
+		const y = evt.clientY - rect.top;
+		console.log(x, y);
+	}
 	onMount(() => {
 		metadataPort = getMetadataPort();
 		metadataPort.addEventListener('message', handleMessage);
@@ -178,6 +187,9 @@
 			width,
 			height
 		});
+		fetch('/rules.md').then(async (res) => {
+			daRules = await res.text();
+		});
 		offscreenCanvas = canvasRef.transferControlToOffscreen();
 		renderWorker?.setOffscreenCanvas(transfer(offscreenCanvas, [offscreenCanvas]));
 		return () => metadataPort.removeEventListener('message', handleMessage);
@@ -185,8 +197,9 @@
 </script>
 
 <div class="flex w-full h-full justify-start items-center">
-	<div class="half bg-sky-200">
+	<div class="half bg-orange-400">
 		<div class="w-full flex items-center p-1 pb-0">
+			<button class="mr-2" on:click={() => dialog.showModal()}>Rules</button>
 			<select name="editor" id="editor" title="Select gen to edit" bind:value={currentCodeId}>
 				<option value="">Not selected</option>
 				{#each bosses as boss (boss)}
@@ -217,7 +230,7 @@
 			</div>
 		</div>
 	</div>
-	<div class="half">
+	<div class="half bg-blue-400">
 		<div class="flex w-full flex-wrap pl-1 pr-1 pt-1">
 			<div class="section">
 				<label for="Gen1"
@@ -305,7 +318,6 @@
 			</div>
 			<div class="section">
 				<div class="flex w-full">
-					<button class="mr-2" on:click={() => dialog.showModal()}>Rules</button>
 					<button class="mr-2" on:click={start}>Start</button>
 					<button class="" on:click={stop}>Stop</button>
 				</div>
@@ -326,63 +338,20 @@
 				</div>
 			</div>
 		</div>
-		<div class="bg-white w-full flex-grow p-2 overflow-hidden pt-1">
+		<div class="w-full flex-grow p-2 overflow-hidden pt-1 relative">
 			<canvas
 				bind:this={canvasRef}
-				class="w-full h-full max-h-[100%] bg-transparent border border-black rounded shadow-lg"
+				class="bg-white w-full h-full max-h-[100%] bg-transparent border border-black rounded shadow-lg"
 			></canvas>
+			<div role="figure" class="absolute w-full h-full z-[1] top-0 left-0" on:pointermove={onPointerMove}></div>
 		</div>
 	</div>
 </div>
 
-<dialog bind:this={dialog} class="w-[600px] h-[600px] overflow-auto">
+<dialog bind:this={dialog} class="w-[600px] h-[600px] overflow-hidden">
 	<div class="w-full h-full flex flex-col">
-		<h3 class="font-semibold">Rules</h3>
-		<ul>
-			<li>Each Gen starts with 1 cell</li>
-			<li>All cells algorithms gets executed exactly 1 time per step</li>
-			<li>Cells have age, and this is used to resolve conflicts</li>
-			<li>
-				As soon as the cell age gets close to 100 steps we linearly decrease from the health a
-				factor from 0 to 0.3 on each step: health -= Math.min(age / 100, 0.3);
-			</li>
-			<li>
-				All cells whose energy is 0 or less at the end of step are dead and gets removed from the
-				simulation
-			</li>
-			<li>
-				To solve conflicts we initially use the cell Age to determine who wins, so the more
-				experienced cell Wins. If both cells have same age we decide randomly
-			</li>
-			<li>
-				Cells can access global variables: 'cell' and 'surroundings'. cell is an object containing
-				cell health, age, gen and memory, surroundings are other cell (objects who only includes the
-				genome string to detect enemies), Walls 'W' or empty spaces 'E'
-			</li>
-		</ul>
-		<p>
-			From a cell perspective the possible direction are: 'T', 'TR', 'R', 'BR', 'B', 'BL', 'L',
-			'TL'. Where T:Top, B:Bottom, R:Right and L:Left.
-		</p>
-		<p>The possible actions that can be returned include:</p>
-		<ul>
-			<li>
-				Rest (R) *We use follow function to determine how much energy the cell can restore
-				'occupiedCount' are the 8 surrounding cells, walls included, health = Math.min(health + 1 -
-				occupiedCount / 10, 99);
-			</li>
-			<li>
-				Eat (E + (direction)) *Take 1 (or if less than 1 then the current health) from target cell
-				no matter if is of same Gen and increase our health
-			</li>
-			<li>Feed (E + (direction)) *Same as Eat but inverse direction</li>
-			<li>Move (M + (direction)))</li>
-			<li>Duplicate (D + (direction))) *Split the cell energy by half</li>
-			<li>A return (string) action must be executed or by default the cell does nothing</li>
-		</ul>
-		<p>Example: Duplicate Left is 'DL'</p>
-    <br>
-    <br>
+		<h1 class="font-md font-semibold pl-2">Da Rules</h1>
+		<div class="w-full overflow-auto h-full p-4"><SvelteMarkdown source={daRules} /></div>
 		<button class="" on:click={() => dialog.close()}>Close</button>
 	</div>
 </dialog>

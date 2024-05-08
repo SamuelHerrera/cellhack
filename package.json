@@ -47,6 +47,7 @@
 		"codemirror": "^6.0.1",
 		"comlink": "^4.4.1",
 		"localforage": "^1.10.0",
-		"monaco-editor": "^0.48.0"
+		"monaco-editor": "^0.48.0",
+		"svelte-markdown": "^0.4.1"
 	}
 }

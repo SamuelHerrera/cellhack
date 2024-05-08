@@ -37,3 +37,21 @@ body {
 input {
   text-align: right;
 }
+
+h1 {
+  @apply font-semibold text-xl;
+}
+h2 {
+  @apply font-semibold;
+}
+
+ul {
+  list-style: none;
+  padding: 1rem;
+}
+
+li {
+  padding: 5px 10px;
+  background-color: #EEEEEE;
+  border: 1px solid #DDDDDD;
+}
